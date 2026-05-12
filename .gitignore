@@ -1,0 +1,41 @@
+# Secrets / Credentials
+.env
+.env.local
+.env.*.local
+*.p8
+*.pem
+*.key
+rsa_key*
+
+# Python
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Code review graph
+.code-review-graph/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
