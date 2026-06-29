@@ -1,3 +1,14 @@
+WITH bing_geo_flags AS (
+    SELECT
+        CAMPAIGN_ID,
+        MAX(CASE WHEN TYPE = 'Campaign Location Criterion' AND SUB_TYPE = 'Country' THEN 1 ELSE 0 END) AS HAS_COUNTRY,
+        MAX(CASE WHEN TYPE = 'Campaign Location Criterion'
+                  AND SUB_TYPE IN ('State','City','Neighborhood','MetroArea','PostalCode')
+                 THEN 1 ELSE 0 END) AS HAS_PROVINCE,
+        MAX(CASE WHEN TYPE = 'Campaign Radius Criterion' THEN 1 ELSE 0 END) AS HAS_PROXIMITY
+    FROM DM_GEOTARGET_ALERT_PRD.DATAMART_SCHEMA.BING_CAMPAIGN_TARGET_CRITERION
+    GROUP BY CAMPAIGN_ID
+)
 SELECT
     c.ACCOUNT_ID,
     a.NAME                AS ACCOUNT_NAME,
@@ -14,5 +25,10 @@ LEFT JOIN DM_GEOTARGET_ALERT_PRD.DATAMART_SCHEMA.BING_CAMPAIGN_TARGET_CRITERION 
     ON cc.CAMPAIGN_ID = c.ID
    AND cc.TYPE = 'Campaign Location Criterion'
    AND cc.SUB_TYPE = 'Country'
+LEFT JOIN bing_geo_flags f
+    ON f.CAMPAIGN_ID = c.ID
 WHERE cc.TARGET IS NULL
+    AND COALESCE(f.HAS_COUNTRY,0) = 0
+    AND COALESCE(f.HAS_PROVINCE,0) = 0
+    AND COALESCE(f.HAS_PROXIMITY,0) = 0
 ORDER BY MEDIA, c.NAME;

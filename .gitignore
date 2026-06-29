@@ -39,3 +39,10 @@ desktop.ini
 
 # Logs
 *.log
+
+# Google OAuth
+client_secrets.json
+token.pickle
+
+# Data outputs
+*.csv

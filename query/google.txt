@@ -1,24 +1,90 @@
-SELECT
-      c.CUSTOMER_ID,
-      cust.DESCRIPTIVE_NAME AS CUSTOMER_NAME,
-      c.ID AS CAMPAIGN_ID,
-      c.NAME AS CAMPAIGN_NAME,
-      c.STATUS,
-      CASE
-          WHEN c.ADVERTISING_CHANNEL_TYPE = 'MULTI_CHANNEL' THEN 'GAC'
-          WHEN c.ADVERTISING_CHANNEL_TYPE = 'DISPLAY' THEN 'Google_GDN'
-          WHEN c.ADVERTISING_CHANNEL_TYPE = 'VIDEO' THEN 'YouTube'
-          WHEN c.ADVERTISING_CHANNEL_TYPE = 'LOCAL' THEN 'O2O'
-          ELSE c.ADVERTISING_CHANNEL_TYPE
-      END AS MEDIA,
-      geo.COUNTRY_CODE
+WITH campaign_criterion_summary AS (
+    SELECT
+        cc.CAMPAIGN_ID,
+        COUNT(*) AS TOTAL_CRITERION_ROWS
+    FROM DM_GEOTARGET_ALERT_PRD.DATAMART_SCHEMA.GOOGLE_CAMPAIGN_CRITERION cc
+    GROUP BY cc.CAMPAIGN_ID
+),
+campaign_geo_summary AS (
+    SELECT
+        cc.CAMPAIGN_ID,
+        MAX(CASE WHEN cc.TYPE = 'LOCATION' AND cc.NEGATIVE = FALSE
+                  AND geo.TARGET_TYPE = 'Country' THEN 1 ELSE 0 END) AS HAS_COUNTRY,
+        MAX(CASE WHEN cc.TYPE = 'LOCATION' AND cc.NEGATIVE = FALSE
+                  AND geo.TARGET_TYPE IN ('Province','City','State','District','Municipality',
+                                           'Region','Department','Governorate','Prefecture',
+                                           'Canton','Borough','Ward','Municipality District',
+                                           'Sub District','Sub-District','Sub-Ward',
+                                           'Territory','Union Territory','Autonomous Community',
+                                           'County','Quarter','Barrio','Commune','Division',
+                                           'Okrug','district','neighborhood','Neighborhood')
+                 THEN 1 ELSE 0 END) AS HAS_PROVINCE,
+        MAX(CASE WHEN cc.TYPE = 'PROXIMITY'
+                  OR (cc.TYPE = 'LOCATION_GROUP' AND cc.NEGATIVE = FALSE)
+                 THEN 1 ELSE 0 END) AS HAS_PROXIMITY,
+        MAX(CASE WHEN cc.TYPE = 'LOCATION' AND cc.NEGATIVE = TRUE THEN 1 ELSE 0 END) AS HAS_NEGATIVE_GEO
+    FROM DM_GEOTARGET_ALERT_PRD.DATAMART_SCHEMA.GOOGLE_CAMPAIGN_CRITERION cc
+    LEFT JOIN DM_GEOTARGET_ALERT_PRD.DATAMART_SCHEMA.GOOGLE_GEO_TARGET_CONSTANT geo
+        ON cc.LOCATION_GEO_TARGET_CONSTANT = geo.RESOURCE_NAME
+    GROUP BY cc.CAMPAIGN_ID
+),
+campaign_country_summary AS (
+    SELECT
+        cc.CAMPAIGN_ID,
+        MIN(geo.COUNTRY_CODE) AS COUNTRY_CODE
+    FROM DM_GEOTARGET_ALERT_PRD.DATAMART_SCHEMA.GOOGLE_CAMPAIGN_CRITERION cc
+    LEFT JOIN DM_GEOTARGET_ALERT_PRD.DATAMART_SCHEMA.GOOGLE_GEO_TARGET_CONSTANT geo
+        ON cc.LOCATION_GEO_TARGET_CONSTANT = geo.RESOURCE_NAME
+    WHERE cc.TYPE = 'LOCATION'
+        AND cc.NEGATIVE = FALSE
+    GROUP BY cc.CAMPAIGN_ID
+),
+filtered_campaigns AS (
+    SELECT
+        c.CUSTOMER_ID,
+        cust.DESCRIPTIVE_NAME AS CUSTOMER_NAME,
+        c.ID AS CAMPAIGN_ID,
+        c.NAME AS CAMPAIGN_NAME,
+        c.STATUS,
+        CASE
+            WHEN c.ADVERTISING_CHANNEL_TYPE = 'MULTI_CHANNEL' THEN 'GAC'
+            WHEN c.ADVERTISING_CHANNEL_TYPE = 'DISPLAY' THEN 'Google_GDN'
+            WHEN c.ADVERTISING_CHANNEL_TYPE = 'VIDEO' THEN 'YouTube'
+            WHEN c.ADVERTISING_CHANNEL_TYPE = 'LOCAL' THEN 'O2O'
+            ELSE c.ADVERTISING_CHANNEL_TYPE
+        END AS MEDIA,
+        country.COUNTRY_CODE,
+        CASE
+            WHEN COALESCE(cs.TOTAL_CRITERION_ROWS, 0) = 0
+              AND (c.GEO_TARGET_TYPE_SETTING_POSITIVE_GEO_TARGET_TYPE IS NOT NULL
+                OR c.GEO_TARGET_TYPE_SETTING_NEGATIVE_GEO_TARGET_TYPE IS NOT NULL) THEN 'SKIP'
+            WHEN COALESCE(cs.TOTAL_CRITERION_ROWS, 0) = 0 THEN 'REVIEW_ETL'
+            WHEN COALESCE(gs.HAS_COUNTRY, 0) = 1
+              OR COALESCE(gs.HAS_PROVINCE, 0) = 1
+              OR COALESCE(gs.HAS_PROXIMITY, 0) = 1
+              OR COALESCE(gs.HAS_NEGATIVE_GEO, 0) = 1 THEN 'SKIP'
+            ELSE 'GET'
+        END AS DECISION
     FROM DM_GEOTARGET_ALERT_PRD.DATAMART_SCHEMA.GOOGLE_CAMPAIGN c
     LEFT JOIN DM_GEOTARGET_ALERT_PRD.DATAMART_SCHEMA.GOOGLE_CUSTOMER cust
         ON c.CUSTOMER_ID = cust.ID
-    LEFT JOIN DM_GEOTARGET_ALERT_PRD.DATAMART_SCHEMA.GOOGLE_CAMPAIGN_CRITERION cc
-        ON cc.CAMPAIGN_ID = c.ID AND cc.TYPE = 'LOCATION' AND cc.NEGATIVE = FALSE
-    LEFT JOIN DM_GEOTARGET_ALERT_PRD.DATAMART_SCHEMA.GOOGLE_GEO_TARGET_CONSTANT geo
-        ON cc.LOCATION_GEO_TARGET_CONSTANT = geo.RESOURCE_NAME
+    LEFT JOIN campaign_country_summary country
+        ON country.CAMPAIGN_ID = c.ID
+    LEFT JOIN campaign_criterion_summary cs
+        ON cs.CAMPAIGN_ID = c.ID
+    LEFT JOIN campaign_geo_summary gs
+        ON gs.CAMPAIGN_ID = c.ID
     WHERE c.ADVERTISING_CHANNEL_TYPE IN ('MULTI_CHANNEL', 'DISPLAY', 'VIDEO', 'LOCAL')
-        AND geo.COUNTRY_CODE IS NULL
-    ORDER BY MEDIA, c.NAME;
+        AND c.STATUS != 'REMOVED'
+)
+SELECT
+    CUSTOMER_ID,
+    CUSTOMER_NAME,
+    CAMPAIGN_ID,
+    CAMPAIGN_NAME,
+    STATUS,
+    MEDIA,
+    COUNTRY_CODE
+FROM filtered_campaigns
+WHERE DECISION = 'GET'
+ORDER BY MEDIA, CAMPAIGN_NAME

@@ -12,11 +12,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.select import Select
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service as ChromeService
-from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.firefox import GeckoDriverManager
+from selenium.webdriver.firefox.service import Service as FirefoxService
 from urllib3.exceptions import MaxRetryError
 
 
@@ -59,15 +58,16 @@ class WebDriver:
         chrome_options.add_experimental_option(
             'localState', chromeLocalStatePrefs)
 
-        # print("Chrome path: {}".format(self.exe_path))
+        # Selenium 4.6+ uses Selenium Manager to auto-resolve the driver
         try:
-            # self.driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
-            self.driver = webdriver.Chrome(service=ChromeService(), options=chrome_options)
-        except:
-            self.driver = webdriver.Chrome(executable_path=os.path.join(
-                os.getcwd(), "00_setting", "chromedriver.exe"), options=chrome_options)
+            self.driver = webdriver.Chrome(options=chrome_options)
+        except Exception:
+            local_driver = os.path.join(os.getcwd(), "00_setting", "chromedriver.exe")
+            self.driver = webdriver.Chrome(
+                service=ChromeService(executable_path=local_driver),
+                options=chrome_options,
+            )
 
-        # run by chromeDriverManager
         return self.driver
 
     def get_defaultProfile_chrome(self):
@@ -100,41 +100,47 @@ class WebDriver:
         #                                        )
 
         # chrome_options.add_argument("--incognito")
-        # print("Chrome path: {}".format(self.exe_path))
 
-        self.driver = webdriver.Chrome(
-            ChromeDriverManager().install(), options=chrome_options)
+        # Selenium 4.6+ uses Selenium Manager to auto-resolve the driver
+        self.driver = webdriver.Chrome(options=chrome_options)
 
     def get_firefox(self):
-
-        # run by chromeDriverManager
-        self.driver = webdriver.Firefox(
-            executable_path=GeckoDriverManager().install())
+        # Selenium 4.6+ uses Selenium Manager to auto-resolve the driver
+        self.driver = webdriver.Firefox(service=FirefoxService())
 
     def get(self, the_url):
-        # if have not has drive yet
-        if not self.driver:
+        if self.driver is None:
             self.get_chrome()
+        assert self.driver is not None
         try:
             self.driver.get(the_url)
-        except MaxRetryError:
+        except (MaxRetryError, WebDriverException):
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+            self.driver = None
             self.get_chrome()
+            assert self.driver is not None
             self.driver.get(the_url)
 
     def save_cookie(self, path='myCookie.pickle'):
+        assert self.driver is not None
         with open(path, 'wb') as filehandler:
             pickle.dump(self.driver.get_cookies(), filehandler)
 
     def load_cookie(self, path='myCookie.pickle'):
+        assert self.driver is not None
         with open(path, 'rb') as cookiesfile:
             cookies = pickle.load(cookiesfile)
             for cookie in cookies:
                 try:
                     self.driver.add_cookie(cookie)
-                except:
+                except Exception:
                     print(f'can not add cookie: {cookie}')
 
     def check_download(self):
+        assert self.download_dir is not None
         sleep(2)
         downloading_files = glob(os.path.join(self.download_dir, "*crdownload*")) + glob(
             os.path.join(self.download_dir, "*.tmp*"))
@@ -147,12 +153,14 @@ class WebDriver:
                 downloading_files = glob(os.path.join(self.download_dir, "*crdownload*")) + glob(
                     os.path.join(self.download_dir, "*.tmp*"))
             else:
-                with open(os.path.join(os.getcwd(), 'download_error_log.log')) as writer:
+                with open(os.path.join(os.getcwd(), 'download_error_log.log'), 'a') as writer:
                     writer.write(
                         "[{}] Download Timeout: Please try again!".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                 self.quit()
+                return
 
     def click_element_by_xpath(self, xpath: str, timeout=None):
+        assert self.driver is not None
         if timeout is None:
             timeout = self.browser_timeout
         return WebDriverWait(self.driver, timeout).until(
@@ -163,6 +171,7 @@ class WebDriver:
             self.click_element_by_xpath(xpath)
 
     def send_keys_to_element_by_xpath(self, xpath, keys_str):
+        assert self.driver is not None
         WebDriverWait(self.driver, self.browser_timeout).until(
             EC.element_to_be_clickable((By.XPATH, xpath))).clear()
         WebDriverWait(self.driver, self.browser_timeout).until(
@@ -173,14 +182,17 @@ class WebDriver:
             self.send_keys_to_element_by_xpath(xpath, keys_strs)
 
     def wait_element_by_xpath(self, xpath: str):
+        assert self.driver is not None
         return WebDriverWait(self.driver, self.browser_timeout).until(
             EC.visibility_of_element_located((By.XPATH, xpath)))
 
     def get_element_by_xpath(self, xpath: str):
+        assert self.driver is not None
         return WebDriverWait(self.driver, self.browser_timeout).until(
             EC.presence_of_element_located((By.XPATH, xpath)))
 
     def get_elements_by_xpath(self, xpath: str, timeout=None):
+        assert self.driver is not None
         if timeout is None:
             timeout = self.browser_timeout
         return WebDriverWait(self.driver, timeout).until(
@@ -192,12 +204,14 @@ class WebDriver:
         self.driver = None
 
     def restart(self):
-        self.driver.quit()
-        self.driver = self.get_chrome()
+        if self.driver is not None:
+            self.driver.quit()
+        self.driver = None
+        self.get_chrome()
 
     def highlight_by_xpath(self, xpath: str):
         """Highlights (blinks) a Selenium Webdriver element"""
-
+        assert self.driver is not None
         element = WebDriverWait(self.driver, self.browser_timeout).until(
             EC.visibility_of_element_located((By.XPATH, xpath)))
 
